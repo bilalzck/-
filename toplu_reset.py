@@ -113,4 +113,7 @@ async def pagelist(ctx, role: discord.Role):
     await msg.edit(view=PageView())
 
 # TOKENİNİ BURAYA YAPIŞTIR (!!!)
-bot.run("token")
+import os
+bot.run(os.getenv("TOKEN"))
+
+
