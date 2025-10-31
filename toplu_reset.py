@@ -1,119 +1,93 @@
+# === GEREKLİ KÜTÜPHANELER ===
 import discord
 from discord.ext import commands
-from discord.ui import View
+from discord import FFmpegPCMAudio, Embed
+from flask import Flask
+from threading import Thread
 
+# === FLASK KEEP-ALIVE SİSTEMİ ===
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "✅ Bot aktif ve çalışıyor!"
+
+def run():
+    app.run(host="0.0.0.0", port=8080)
+
+Thread(target=run).start()
+
+# === DISCORD BOT AYARLARI ===
 intents = discord.Intents.default()
-intents.members = True
-intents.presences = True
 intents.message_content = True
+intents.guilds = True
 intents.voice_states = True
+intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+bot.remove_command("help")  # kendi help (commands) komutumuzu yapacağız
 
-VOICE_CHANNEL_ID = 1433664286634410014  # Ses kanalı ID
-
+# === BOT OLAYLARI ===
 @bot.event
 async def on_ready():
-    print(f"✅ Bot aktif: {bot.user}")
+    print(f"✅ {bot.user} olarak giriş yapıldı!")
+    await bot.change_presence(activity=discord.Game("Sunucuyu yönetiyor!"))
 
-    # Ses kanalına bağlanma
-    channel = bot.get_channel(VOICE_CHANNEL_ID)
-    if channel and isinstance(channel, discord.VoiceChannel):
-        try:
+# === KOMUT: !commands ===
+@bot.command(name="commands")
+async def commands_list(ctx):
+    embed = Embed(
+        title="📜 Komut Listesi",
+        description="Aşağıda mevcut komutları görebilirsiniz:",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="!pagelist", value="Ses kanalına katılır ve listedeki kişileri sıralar.", inline=False)
+    embed.add_field(name="!join", value="Botu bulunduğun ses kanalına bağlar.", inline=False)
+    embed.add_field(name="!leave", value="Botu bulunduğu ses kanalından çıkarır.", inline=False)
+    embed.add_field(name="!commands", value="Tüm komutları gösterir.", inline=False)
+    embed.set_footer(text=f"İsteyen: {ctx.author}", icon_url=ctx.author.avatar.url if ctx.author.avatar else None)
+    await ctx.send(embed=embed)
+
+# === KOMUT: !join ===
+@bot.command(name="join")
+async def join(ctx):
+    if ctx.author.voice:
+        channel = ctx.author.voice.channel
+        if ctx.voice_client is None:
             await channel.connect()
-            print(f"🔊 Ses kanalına bağlanıldı: {channel.name}")
-        except Exception as e:
-            print(f"⚠️ Ses kanalına bağlanılamadı: {e}")
+            await ctx.send(f"🔊 {channel.name} kanalına bağlandım.")
+        else:
+            await ctx.voice_client.move_to(channel)
+            await ctx.send(f"🔄 {channel.name} kanalına taşındım.")
     else:
-        print("⚠️ Geçerli ses kanalı bulunamadı.")
+        await ctx.send("❌ Bir ses kanalında değilsin.")
 
-    await bot.change_presence(activity=discord.Game(name="!pagelist @rol"))
+# === KOMUT: !leave ===
+@bot.command(name="leave")
+async def leave(ctx):
+    if ctx.voice_client:
+        await ctx.voice_client.disconnect()
+        await ctx.send("👋 Ses kanalından çıktım.")
+    else:
+        await ctx.send("❌ Zaten bir ses kanalında değilim.")
 
-# Durum emojisi
-def durum_emoji(status):
-    if status == discord.Status.online:
-        return "🟢"
-    elif status == discord.Status.idle:
-        return "🌙"
-    elif status == discord.Status.dnd:
-        return "🔴"
-    elif status == discord.Status.offline:
-        return "⚫"
-    return "🟣"
-
-# Sayfa içeriği oluştur
-def create_page(members, page, per_page):
-    start = (page - 1) * per_page
-    end = start + per_page
-    sliced = members[start:end]
-
-    lines = []
-    for m in sliced:
-        emoji = durum_emoji(m.status)
-        lines.append(f"{emoji} <@{m.id}>")
-
-    text = "\n".join(lines) or "Bu sayfada üye yok."
-    return f"📄 **Sayfa {page}** ({len(members)} toplam üye)\n\n{text}"
-
-# !pagelist komutu
-@bot.command()
-async def pagelist(ctx, role: discord.Role):
-    members = [m for m in role.members]
-    if not members:
-        await ctx.send("❌ Bu rolde üye yok.")
+# === KOMUT: !pagelist ===
+@bot.command(name="pagelist")
+async def pagelist(ctx):
+    if not ctx.author.voice or not ctx.author.voice.channel:
+        await ctx.send("❌ Lütfen önce bir ses kanalına katıl.")
         return
 
-    per_page = 25
-    total_pages = (len(members) + per_page - 1) // per_page
-    page = 1
+    channel = ctx.author.voice.channel
+    members = channel.members[:25]  # max 25 kişi
 
-    embed = discord.Embed(
-        title=f"👥 {role.name} Rolündeki Üyeler",
-        description=create_page(members, page, per_page),
-        color=discord.Color.blurple()
+    description = "\n".join([f"🎧 {member.display_name}" for member in members])
+    embed = Embed(
+        title=f"📋 {channel.name} Kanalındaki Kişiler ({len(members)}/25)",
+        description=description if members else "Kanalda kimse yok.",
+        color=discord.Color.green()
     )
-    embed.set_footer(text=f"Sayfa {page}/{total_pages}")
+    await ctx.send(embed=embed)
 
-    msg = await ctx.send(embed=embed)
-
-    class PageView(View):
-        def __init__(self):
-            super().__init__(timeout=None)
-
-        @discord.ui.button(label="◀️ Geri", style=discord.ButtonStyle.gray)
-        async def previous(self, interaction, button):
-            nonlocal page
-            if page > 1:
-                page -= 1
-                new_embed = discord.Embed(
-                    title=f"👥 {role.name} Rolündeki Üyeler",
-                    description=create_page(members, page, per_page),
-                    color=discord.Color.blurple()
-                )
-                new_embed.set_footer(text=f"Sayfa {page}/{total_pages}")
-                await interaction.response.edit_message(embed=new_embed, view=self)
-            else:
-                await interaction.response.defer()
-
-        @discord.ui.button(label="▶️ İleri", style=discord.ButtonStyle.gray)
-        async def next(self, interaction, button):
-            nonlocal page
-            if page < total_pages:
-                page += 1
-                new_embed = discord.Embed(
-                    title=f"👥 {role.name} Rolündeki Üyeler",
-                    description=create_page(members, page, per_page),
-                    color=discord.Color.blurple()
-                )
-                new_embed.set_footer(text=f"Sayfa {page}/{total_pages}")
-                await interaction.response.edit_message(embed=new_embed, view=self)
-            else:
-                await interaction.response.defer()
-
-    await msg.edit(view=PageView())
-
-# TOKENİNİ BURAYA YAPIŞTIR (!!!)
-import os
-bot.run(os.getenv("TOKEN"))
-
-
+# === BOT TOKEN ===
+bot.run("token")
